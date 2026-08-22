@@ -6,7 +6,7 @@ const account: AccountMeta = {
   key: "k",
   serverUrl: "https://h",
   username: "alice",
-  series: { "a-blog": "C:/x/a-blog", "b-lib": "C:/x/b-lib" },
+  series: { "a-blog": { dir: "C:/x/a-blog" }, "b-lib": { dir: "C:/x/b-lib" } },
 };
 
 describe("sync 决策", () => {
@@ -24,7 +24,7 @@ describe("sync 决策", () => {
   });
 
   it("pathBelongsToAccount 最长匹配优先", () => {
-    const nested: AccountMeta = { ...account, series: { a: "C:/x/a", "a/sub": "C:/x/a/sub" } };
+    const nested: AccountMeta = { ...account, series: { a: { dir: "C:/x/a" }, "a/sub": { dir: "C:/x/a/sub" } } };
     // "a" 匹配到 "a/sub"（更长）应返回 "C:/x/a/sub"
     expect(pathBelongsToAccount("C:/x/a/sub/deep.md", nested)).toBe("C:/x/a/sub");
     expect(pathBelongsToAccount("C:/x/a/other.md", nested)).toBe("C:/x/a");

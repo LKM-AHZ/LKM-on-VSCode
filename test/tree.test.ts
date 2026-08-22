@@ -6,7 +6,7 @@ const account: AccountMeta = {
   key: "https://h:alice",
   serverUrl: "https://h",
   username: "alice",
-  series: { "a-blog": "C:/x/a-blog" },
+  series: { "a-blog": { dir: "C:/x/a-blog", id: 3 } },
 };
 
 describe("tree", () => {
@@ -15,13 +15,14 @@ describe("tree", () => {
     expect(children).toHaveLength(0);
   });
 
-  it("有账号时 children 为系列节点", () => {
+  it("有账号时 children 为系列节点（含 id）", () => {
     const children = buildTreeChildren(account);
     expect(children).toHaveLength(1);
     const n = children[0] as SeriesTreeNodeData;
     expect(n.repoName).toBe("a-blog");
     expect(n.dir).toBe("C:/x/a-blog");
     expect(n.key).toBe(account.key);
+    expect(n.id).toBe(3);
   });
 
   it("buildRootItem 用账号显示名", () => {

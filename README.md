@@ -21,8 +21,8 @@
 
 ## 系列 CRUD
 - 创建系列：`LKM: Create Series`（Bearer 认证，成功后映射到当前账号）。
-- 删除系列：`LKM: Delete Series` —— **已知限制**：当前以 repo_name 存储映射、未接入真实后端 series id，命令仅提示不发起真实删除，后续版本完成。
-- 星标：`LKM: Toggle Star` —— **已知限制**：同样依赖真实 series id 接线，命令仅提示。
+- 删除系列：`LKM: Delete Series` —— 调 `DELETE /blog/series/{id}`，成功后移除本地映射。系列 id 在 clone 时写入映射；旧映射缺失时会在首次操作按 repo_name 反查并自动补写。
+- 星标：`LKM: Toggle Star` —— 调 `POST /blog/series/{id}/star`，按返回 `starred` 反馈加星/取消星。
 
 ## 自动同步
 默认**只读**：按账号映射目录执行 pull（定时轮询 + 窗口聚焦时触发），失败静默时不打断编辑。

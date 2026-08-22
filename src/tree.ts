@@ -7,6 +7,7 @@ export interface SeriesTreeNodeData {
   key: string;
   repoName: string;
   dir: string;
+  id?: number;
 }
 
 /**
@@ -20,11 +21,12 @@ export function accountLabel(account: AccountMeta | null): string {
 /** 生成树 children：无账号→空；有账号→该账号所有系列的叶子节点。 */
 export function buildTreeChildren(account: AccountMeta | null): SeriesTreeNodeData[] {
   if (!account) return [];
-  return Object.entries(account.series).map(([repoName, dir]) => ({
+  return Object.entries(account.series).map(([repoName, entry]) => ({
     __lkm: "series",
     key: account.key,
     repoName,
-    dir,
+    dir: entry.dir,
+    id: entry.id,
   }));
 }
 

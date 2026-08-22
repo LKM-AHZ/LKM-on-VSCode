@@ -99,7 +99,12 @@ export async function runCloneFlow(
 
 /** 按账号 clone 的最终结果：cloned 分支含已写回映射的新账号。 */
 export type CloneResult =
-  | { kind: "cloned"; account: AccountMeta; series: { repo_name: string; dir: string }; message: string }
+  | {
+      kind: "cloned";
+      account: AccountMeta;
+      series: { repo_name: string; dir: string; id: number };
+      message: string;
+    }
   | { kind: "cancelled"; message?: string }
   | { kind: "error"; message: string };
 
@@ -156,8 +161,13 @@ export async function runCloneForAccount(
   try {
     await deps.doClone(cloneUrl, targetDir);
     await deps.afterCloneHint?.(targetDir);
-    const updated = mapSeries(account, picked.repo_name, targetDir);
-    return { kind: "cloned", account: updated, series: { repo_name: picked.repo_name, dir: targetDir }, message: `已克隆 ${picked.title}` };
+    const updated = mapSeries(account, picked.repo_name, targetDir, picked.id);
+    return {
+      kind: "cloned",
+      account: updated,
+      series: { repo_name: picked.repo_name, dir: targetDir, id: picked.id },
+      message: `已克隆 ${picked.title}`,
+    };
   } catch (err) {
     return { kind: "error", message: `克隆失败：${(err as Error).message}` };
   }

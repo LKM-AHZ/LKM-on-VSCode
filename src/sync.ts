@@ -29,10 +29,10 @@ export function shouldPullNow(
 export function pathBelongsToAccount(filePath: string, account: AccountMeta): string | null {
   const fp = norm(filePath);
   let best: { dir: string; len: number } | null = null;
-  for (const dir of Object.values(account.series)) {
-    const d = norm(dir);
+  for (const entry of Object.values(account.series)) {
+    const d = norm(entry.dir);
     if (fp === d || fp.startsWith(d.endsWith("/") ? d : d + "/")) {
-      if (!best || d.length > best.len) best = { dir, len: d.length };
+      if (!best || d.length > best.len) best = { dir: entry.dir, len: d.length };
     }
   }
   return best ? best.dir : null;
@@ -40,5 +40,5 @@ export function pathBelongsToAccount(filePath: string, account: AccountMeta): st
 
 /** 该账号所有映射目录（原始值，去重）。 */
 export function collectPullTargets(account: AccountMeta): string[] {
-  return Array.from(new Set(Object.values(account.series)));
+  return Array.from(new Set(Object.values(account.series).map((s) => s.dir)));
 }

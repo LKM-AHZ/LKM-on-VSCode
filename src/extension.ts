@@ -1,18 +1,20 @@
 import * as vscode from "vscode";
 import {
   AccountMeta,
-  listAccounts,
   addAccount,
   removeAccount,
   findAccount,
   accountKey,
+  mapSeries,
+  unmapSeries,
+  normalizeSeriesMap,
 } from "./accounts";
 import {
   getCredentialsForAccount,
   clearCredentialsForAccount,
   promptCredentialsForAccount,
 } from "./creds";
-import { createSeries } from "./api";
+import { listSeries, createSeries, deleteSeries, toggleStar, BlogSeries } from "./api";
 import { createTokenManager, TokenManager } from "./auth";
 import { CloneDeps, runCloneForAccount } from "./clone";
 import { getActiveGitRepository, getGitByDir } from "./git";
@@ -53,10 +55,10 @@ function getConfig<T>(key: string, dflt: T): T {
   return vscode.workspace.getConfiguration(section).get<T>(inner, dflt);
 }
 
-/** 从 globalState 读出账号列表。 */
+/** 从 globalState 读出账号列表，并对旧结构系列值（裸 string）做迁移规范化。 */
 function loadAccounts(context: vscode.ExtensionContext): AccountMeta[] {
   const saved = (context.globalState.get("lkm.accounts") as AccountMeta[] | undefined) ?? [];
-  return listAccounts(saved);
+  return saved.map((a) => ({ ...a, series: normalizeSeriesMap(a.series ?? {}) }));
 }
 
 /** 把账号列表持久化到 globalState。 */
@@ -195,6 +197,40 @@ export function registerCommands(
     } catch {
       return null;
     }
+  }
+
+  /** 把账号写回账号列表并持久化；若是当前账号，同步更新 current 并刷新树。 */
+  function persistAccount(acc: AccountMeta): void {
+    const idx = accounts.findIndex((a) => a.key === acc.key);
+    accounts = idx >= 0 ? accounts.map((a) => (a.key === acc.key ? acc : a)) : [...accounts, acc];
+    saveAccounts(context, accounts);
+    if (current && current.key === acc.key) setCurrent(acc);
+  }
+
+  /**
+   * 取某系列的后端 id：映射里已有（新结构）直接用；
+   * 缺失（旧映射）则调 listSeries 按 repo_name 反查，成功后回写映射并持久化。
+   * 返回 { id, account }（account 为回写后的账号）；反查不到/失败返回 null。
+   */
+  async function ensureSeriesId(
+    acc: AccountMeta,
+    repoName: string
+  ): Promise<{ id: number; account: AccountMeta } | null> {
+    const existing = acc.series[repoName]?.id;
+    if (existing !== undefined) return { id: existing, account: acc };
+    const tok = await ensureAuthedToken(acc);
+    if (!tok) return null;
+    let list: BlogSeries[];
+    try {
+      list = await listSeries(acc.serverUrl, `Bearer ${tok}`);
+    } catch {
+      return null;
+    }
+    const hit = list.find((s) => s.repo_name === repoName);
+    if (!hit) return null;
+    const updated = mapSeries(acc, repoName, acc.series[repoName]?.dir ?? "", hit.id);
+    persistAccount(updated);
+    return { id: hit.id, account: updated };
   }
 
   // ---- LKM: Add Account ----
@@ -353,16 +389,59 @@ export function registerCommands(
       { placeHolder: "选择要删除的系列" }
     );
     if (!picked) return;
-    // 真实删除需要后端 series id，而当前映射以 repo_name 存储、未接真实 id。
-    // 为不发起欺骗性 API 调用，本版仅提示，真实接线留作后续版本。
-    vscode.window.showWarningMessage("系列删除尚未接入真实 series id，后续版本完成");
+    const ok = await vscode.window.showWarningMessage(
+      `确认删除系列 ${picked.repo}？将删除远端内容并移除本地映射。`,
+      { modal: true },
+      "删除"
+    );
+    if (ok !== "删除") return;
+    const resolved = await ensureSeriesId(acc, picked.repo);
+    if (!resolved) {
+      vscode.window.showErrorMessage(`无法确定系列 ${picked.repo} 的 id，可能已被删除`);
+      return;
+    }
+    const tok = await ensureAuthedToken(resolved.account);
+    if (!tok) return;
+    try {
+      await deleteSeries(resolved.account.serverUrl, tok, resolved.id);
+    } catch (err) {
+      onAuthError(resolved.account.key, err);
+      vscode.window.showErrorMessage(`删除失败：${(err as Error).message}`);
+      return;
+    }
+    const un = unmapSeries(resolved.account, picked.repo);
+    persistAccount(un);
+    vscode.window.showInformationMessage(`已删除系列 ${picked.repo}`);
   }
 
-  // 星标同样依赖真实 series id，尚未接线；保留命令入口但仅提示。
+  // 星标：接真实 series id，调 toggleStar。
   async function handleToggleStar() {
     const acc = await ensureCurrent();
     if (!acc) return;
-    vscode.window.showWarningMessage("星标尚未接入真实 series id，后续版本完成");
+    const entries = Object.entries(acc.series);
+    if (entries.length === 0) {
+      vscode.window.showWarningMessage("当前账号没有已映射系列");
+      return;
+    }
+    const picked = await vscode.window.showQuickPick(
+      entries.map(([repo]) => ({ label: repo, repo })),
+      { placeHolder: "选择要加星/取消星的系列" }
+    );
+    if (!picked) return;
+    const resolved = await ensureSeriesId(acc, picked.repo);
+    if (!resolved) {
+      vscode.window.showErrorMessage(`无法确定系列 ${picked.repo} 的 id，可能已被删除`);
+      return;
+    }
+    const tok = await ensureAuthedToken(resolved.account);
+    if (!tok) return;
+    try {
+      const s = await toggleStar(resolved.account.serverUrl, tok, resolved.id);
+      vscode.window.showInformationMessage(s.starred ? `已加星 ${picked.repo}` : `已取消星 ${picked.repo}`);
+    } catch (err) {
+      onAuthError(resolved.account.key, err);
+      vscode.window.showErrorMessage(`星标操作失败：${(err as Error).message}`);
+    }
   }
 
   const subs = context.subscriptions;

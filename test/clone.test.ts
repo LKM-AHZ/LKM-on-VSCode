@@ -192,8 +192,9 @@ describe("clone (按账号)", () => {
     if (out.kind === "cloned") {
       expect(out.series.repo_name).toBe("my-blog");
       expect(out.series.dir).toBe("C:/x/my-blog");
-      // 核心交付：新系列已写回账号映射，目录即目标目录
-      expect(out.account.series["my-blog"]).toBe("C:/x/my-blog");
+      // 核心交付：新系列已写回账号映射，值为含 dir 与 id 的对象
+      expect(out.account.series["my-blog"]).toEqual({ dir: "C:/x/my-blog", id: 1 });
+      expect(out.series.id).toBe(1); // clone 顺带写后端 id
       expect(doClone).toHaveBeenCalledOnce();
       const url = doClone.mock.calls[0][0] as string;
       expect(url).toContain("/api/v1/blog/git/my-blog.git");

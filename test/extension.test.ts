@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import * as vscode from "vscode";
 import {
   registerCommands,
   PULL_CMD,
@@ -154,5 +155,238 @@ describe("extension 401 升级", () => {
     // 总 fetch：401 一次 + 新凭证兑换一次 + 创建系列一次，未对 login 无限重试。
     expect(fetchMock).toHaveBeenCalledTimes(3);
     vi.unstubAllGlobals();
+  });
+});
+
+describe("extension 删除系列 / 星标", () => {
+  const key = accountKey("https://h", "alice");
+  const account: AccountMeta = {
+    key,
+    serverUrl: "https://h",
+    username: "alice",
+    series: { "my-blog": { dir: "C:/x/my-blog", id: 5 } },
+  };
+
+  function jsonResp(body: unknown, status = 200) {
+    return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+  }
+
+  function makeEnv() {
+    const globalState = {
+      get: vi.fn((k: string) => {
+        if (k === "lkm.accounts") return [account];
+        if (k === "lkm.currentAccount") return key;
+        return undefined;
+      }),
+      update: vi.fn(async () => {}),
+    };
+    const callbacks = new Map<string, (...args: never[]) => unknown>();
+    const fakeRegister = (id: string, cb: (...args: never[]) => unknown) => {
+      callbacks.set(id, cb);
+      return { dispose() {} } as { dispose(): void };
+    };
+    const secrets = {
+      get: vi.fn(async () => "alice\u0000pw"),
+      store: vi.fn(async () => {}),
+      delete: vi.fn(async () => {}),
+    };
+    registerCommands(
+      { subscriptions: { push() {} }, globalState, secrets } as never,
+      fakeRegister as never,
+      [] as never
+    );
+    return { callbacks, globalState };
+  }
+
+  it("删除系列：确认后调 DELETE /series/5 并移除本地映射", async () => {
+    const env = makeEnv();
+    // showQuickPick 选中系列；showWarningMessage 确认返回 "删除"
+    vi.spyOn(vscode.window, "showQuickPick").mockResolvedValue({ label: "my-blog", repo: "my-blog" } as never);
+    vi.spyOn(vscode.window, "showWarningMessage").mockResolvedValue("删除" as never);
+    // fetch 序列：login 换 token → deleteSeries（有 id，故不调 listSeries）
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResp({ code: 0, msg: "ok", data: { access_token: "tok" } }))
+      .mockResolvedValueOnce(jsonResp({ code: 0, msg: "ok", data: null }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const handler = env.callbacks.get(DELETE_SERIES_CMD)!;
+    await handler();
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const urls = fetchMock.mock.calls.map((c) => (c as [string])[0]);
+    expect(urls.some((u) => u.endsWith("/api/v1/blog/series/5"))).toBe(true);
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("星标：调 POST /series/5/star 并按 starred 反馈", async () => {
+    const env = makeEnv();
+    vi.spyOn(vscode.window, "showQuickPick").mockResolvedValue({ label: "my-blog", repo: "my-blog" } as never);
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResp({ code: 0, msg: "ok", data: { access_token: "tok" } }))
+      .mockResolvedValueOnce(jsonResp({ code: 0, msg: "ok", data: { starred: true } }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const handler = env.callbacks.get(TOGGLE_STAR_CMD)!;
+    await handler();
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const urls = fetchMock.mock.calls.map((c) => (c as [string])[0]);
+    expect(urls.some((u) => u.endsWith("/api/v1/blog/series/5/star"))).toBe(true);
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("映射缺 id 时反查 listSeries 并回写 id 后再删除", async () => {
+    const missingId: AccountMeta = {
+      key,
+      serverUrl: "https://h",
+      username: "alice",
+      series: { "my-blog": { dir: "C:/x/my-blog" } }, // 无 id（旧结构/手抹）
+    };
+    const globalState = {
+      get: vi.fn((k: string) => {
+        if (k === "lkm.accounts") return [missingId];
+        if (k === "lkm.currentAccount") return key;
+        return undefined;
+      }),
+      update: vi.fn(async () => {}),
+    };
+    const callbacks = new Map<string, (...args: never[]) => unknown>();
+    const fakeRegister = (id: string, cb: (...args: never[]) => unknown) => {
+      callbacks.set(id, cb);
+      return { dispose() {} } as { dispose(): void };
+    };
+    const secrets = { get: vi.fn(async () => "alice\u0000pw"), store: vi.fn(async () => {}), delete: vi.fn(async () => {}) };
+    registerCommands(
+      { subscriptions: { push() {} }, globalState, secrets } as never,
+      fakeRegister as never,
+      [] as never
+    );
+    vi.spyOn(vscode.window, "showQuickPick").mockResolvedValue({ label: "my-blog", repo: "my-blog" } as never);
+    vi.spyOn(vscode.window, "showWarningMessage").mockResolvedValue("删除" as never);
+    // fetch 序列：login → listSeries(反查得 id=5) → deleteSeries
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResp({ code: 0, msg: "ok", data: { access_token: "tok" } }))
+      .mockResolvedValueOnce(jsonResp({ code: 0, msg: "ok", data: { items: [{ id: 5, title: "My Blog", repo_name: "my-blog", status: "ACTIVE" }] } }))
+      .mockResolvedValueOnce(jsonResp({ code: 0, msg: "ok", data: null }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const handler = callbacks.get(DELETE_SERIES_CMD)!;
+    await handler();
+
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    // 含一次 listSeries 反查（GET /blog/series）
+    const urls = fetchMock.mock.calls.map((c) => (c as [string])[0]);
+    expect(urls.some((u) => u.includes("/api/v1/blog/series") && !/series\/\d+/.test(u))).toBe(true);
+    expect(urls.some((u) => u.endsWith("/api/v1/blog/series/5"))).toBe(true);
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("映射缺 id 且反查未命中 → 提示，不发删除请求", async () => {
+    // 无 id 账号：反查 listSeries 返回空 items → ensureSeriesId 返回 null → 提示不发 DELETE
+    const missingId: AccountMeta = {
+      key,
+      serverUrl: "https://h",
+      username: "alice",
+      series: { "my-blog": { dir: "C:/x/my-blog" } },
+    };
+    const globalState = {
+      get: vi.fn((k: string) => {
+        if (k === "lkm.accounts") return [missingId];
+        if (k === "lkm.currentAccount") return key;
+        return undefined;
+      }),
+      update: vi.fn(async () => {}),
+    };
+    const callbacks = new Map<string, (...args: never[]) => unknown>();
+    const fakeRegister = (id: string, cb: (...args: never[]) => unknown) => {
+      callbacks.set(id, cb);
+      return { dispose() {} } as { dispose(): void };
+    };
+    const secrets = { get: vi.fn(async () => "alice\u0000pw"), store: vi.fn(async () => {}), delete: vi.fn(async () => {}) };
+    registerCommands(
+      { subscriptions: { push() {} }, globalState, secrets } as never,
+      fakeRegister as never,
+      [] as never
+    );
+    vi.spyOn(vscode.window, "showQuickPick").mockResolvedValue({ label: "my-blog", repo: "my-blog" } as never);
+    vi.spyOn(vscode.window, "showWarningMessage").mockResolvedValue("删除" as never);
+    // fetch 序列：login 换 token → listSeries 返回空 items（反查未命中）
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResp({ code: 0, msg: "ok", data: { access_token: "tok" } }))
+      .mockResolvedValueOnce(jsonResp({ code: 0, msg: "ok", data: { items: [] } }));
+    vi.stubGlobal("fetch", fetchMock);
+    const handler = callbacks.get(DELETE_SERIES_CMD)!;
+    await handler();
+    // 只有 login + listSeries，无 DELETE（不发无效请求）
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+});
+
+/**
+ * Fix Finding-1：旧版持久化到 globalState 的系列值是裸 string（目录路径），
+ * 升级到 { dir, id? } 新结构后读取旧数据不得崩溃，且能正常删除/星标。
+ */
+describe("extension 迁移旧系列 string 值", () => {
+  const key = accountKey("https://h", "alice");
+  // 旧账号数据：series 值为裸 string（v0.2 持久化形态）。
+  const legacyAccount = {
+    key,
+    serverUrl: "https://h",
+    username: "alice",
+    series: { "my-blog": "C:/x/my-blog" },
+  };
+
+  function jsonResp(body: unknown, status = 200) {
+    return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+  }
+
+  function makeEnv() {
+    const globalState = {
+      get: vi.fn((k: string) => {
+        if (k === "lkm.accounts") return [legacyAccount];
+        if (k === "lkm.currentAccount") return key;
+        return undefined;
+      }),
+      update: vi.fn(async () => {}),
+    };
+    const callbacks = new Map<string, (...args: never[]) => unknown>();
+    const fakeRegister = (id: string, cb: (...args: never[]) => unknown) => {
+      callbacks.set(id, cb);
+      return { dispose() {} } as { dispose(): void };
+    };
+    const secrets = { get: vi.fn(async () => "alice\u0000pw"), store: vi.fn(async () => {}), delete: vi.fn(async () => {}) };
+    registerCommands(
+      { subscriptions: { push() {} }, globalState, secrets } as never,
+      fakeRegister as never,
+      [] as never
+    );
+    return { callbacks, globalState };
+  }
+
+  it("旧 string 系列值不崩溃且可正常删除（迁移为 {dir} 后反查 id）", async () => {
+    const env = makeEnv();
+    vi.spyOn(vscode.window, "showQuickPick").mockResolvedValue({ label: "my-blog", repo: "my-blog" } as never);
+    vi.spyOn(vscode.window, "showWarningMessage").mockResolvedValue("删除" as never);
+    // 迁移成 { dir }（无 id）→ 走反查路径：login → listSeries → deleteSeries
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResp({ code: 0, msg: "ok", data: { access_token: "tok" } }))
+      .mockResolvedValueOnce(jsonResp({ code: 0, msg: "ok", data: { items: [{ id: 5, title: "My Blog", repo_name: "my-blog", status: "ACTIVE" }] } }))
+      .mockResolvedValueOnce(jsonResp({ code: 0, msg: "ok", data: null }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const handler = env.callbacks.get(DELETE_SERIES_CMD)!;
+    await handler();
+
+    // 不崩溃；触发反查删除。
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    const urls = fetchMock.mock.calls.map((c) => (c as [string])[0]);
+    expect(urls.some((u) => u.endsWith("/api/v1/blog/series/5"))).toBe(true);
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
   });
 });
