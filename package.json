@@ -7,7 +7,7 @@
   "license": "GPL-3.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/example/lkm-on-vscode.git"
+    "url": "https://github.com/LKM-AHZ/LKM-on-VSCode.git"
   },
   "author": "LKM",
   "engines": {
@@ -82,7 +82,7 @@
         "lkm.serverUrl": {
           "type": "string",
           "default": "",
-          "description": "LKM 后端地址，如 https://lkm.s12mc.xyz"
+          "description": "LKM 后端地址，如 https://lkm-ahz.ltd"
         },
         "lkm.sync.pullIntervalMinutes": {
           "type": "number",
