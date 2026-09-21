@@ -1,3 +1,22 @@
 node_modules/
 dist/
 *.vsix
+
+# 本地密钥/环境文件：扩展会保存账号凭证与可配置的后端地址，防止散落的本地配置被误提交
+.env
+.env.*
+!.env.example
+*.local
+
+# 测试/覆盖率产物
+coverage/
+
+# 日志
+*.log
+npm-debug.log*
+yarn-error.log*
+
+# 编辑器/操作系统元数据
+.DS_Store
+Thumbs.db
+.idea/

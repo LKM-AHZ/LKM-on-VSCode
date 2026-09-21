@@ -9,13 +9,30 @@
  * 只提供可调用的 stub / 空对象，语义逻辑由各测试自行 mock。
  */
 
+/**
+ * 内存版配置存储：按 section → key 分层，update() 写入后能被后续 getConfiguration().get() 读到，
+ * 否则依赖配置的代码永远只看到默认值，读/写流程从未被真正走到。
+ */
+const configStore = new Map<string, Map<string, unknown>>();
+
 export const workspace = {
-  getConfiguration: (section?: string) => ({
-    get: <T>(key: string, defaultValue?: T): T | undefined => defaultValue,
-    has: () => false,
-    inspect: () => undefined,
-    update: () => Promise.resolve(),
-  }),
+  getConfiguration: (section = "") => {
+    let values = configStore.get(section);
+    if (!values) {
+      values = new Map<string, unknown>();
+      configStore.set(section, values);
+    }
+    return {
+      get: <T>(key: string, defaultValue?: T): T | undefined =>
+        values.has(key) ? (values.get(key) as T) : defaultValue,
+      has: (key: string) => values.has(key),
+      inspect: () => undefined,
+      update: (key: string, value: unknown) => {
+        values.set(key, value);
+        return Promise.resolve();
+      },
+    };
+  },
   workspaceFolders: [],
 };
 
@@ -27,6 +44,15 @@ export const workspace = {
  * 不要求配合 vi.mock，直接通过本模块导入使用即可。
  */
 export const __inputBoxQueue: Array<string | undefined> = [];
+
+/**
+ * 清空输入队列。
+ * 队列是模块级共享状态：未消费完的条目会漏进下一个用例造成顺序相关的偶发失败，
+ * 用例的 beforeEach 里统一调用它复位。
+ */
+export const resetInputBoxQueue = (): void => {
+  __inputBoxQueue.length = 0;
+};
 
 export const window = {
   showInformationMessage: (..._args: unknown[]) => Promise.resolve(undefined),
@@ -67,9 +93,28 @@ export const env = {
   uiKind: 1,
 };
 
+/**
+ * 最小 Uri 桩：除 parse/file 外补齐 path/authority/query/fragment 与 with/joinPath/toString(true)，
+ * 否则用 joinPath/with 拼路径的代码在被测时会抛错或静默走错分支。
+ */
+function makeUri(value: string) {
+  return {
+    scheme: "file",
+    fsPath: value,
+    path: value,
+    authority: "",
+    query: "",
+    fragment: "",
+    with: (change: { path?: string; fsPath?: string; scheme?: string }) =>
+      makeUri(change.path ?? change.fsPath ?? value),
+    joinPath: (segment: string) => makeUri(`${value.replace(/\/+$/, "")}/${segment}`),
+    toString: (_skipEncoding?: boolean) => value,
+  };
+}
+
 export const Uri = {
-  parse: (value: string) => ({ scheme: "file", fsPath: value, toString: () => value }),
-  file: (path: string) => ({ scheme: "file", fsPath: path, toString: () => path }),
+  parse: (value: string) => makeUri(value),
+  file: (path: string) => makeUri(path),
 };
 
 export const Disposable = class Disposable {
@@ -96,17 +141,48 @@ export const TreeItem = class TreeItem {
 };
 
 export const EventEmitter = class EventEmitter<T = unknown> {
-  event = (_listener: (e: T) => unknown, _thisArgs?: unknown, _disposables?: unknown) => new Disposable();
-  fire(_data?: T): void {}
-  dispose(): void {}
+  private listeners: Array<(e: T) => unknown> = [];
+  // 真实 EventEmitter 的 event() 会登记监听者；只返回 Disposable 而不登记，
+  // 会让 fire() 永远没人收到，事件驱动逻辑在测试里变成假绿灯。
+  event = (listener: (e: T) => unknown, _thisArgs?: unknown, _disposables?: unknown) => {
+    this.listeners.push(listener);
+    return new Disposable();
+  };
+  fire(data?: T): void {
+    for (const listener of this.listeners) listener(data as T);
+  }
+  dispose(): void {
+    this.listeners = [];
+  }
 };
+
+/**
+ * 内存版 Memento 桩：还原 get/update/keys 语义。
+ * 用 {} 顶替会让持久化代码在 `state.get is not a function` 上抛错或被静默跳过，
+ * 状态读写路径就从未被真正测到。
+ */
+export function createMementoStub(): {
+  get<T>(key: string, defaultValue?: T): T | undefined;
+  update(key: string, value: unknown): Promise<void>;
+  keys(): readonly string[];
+} {
+  const store = new Map<string, unknown>();
+  return {
+    get: <T>(key: string, defaultValue?: T): T | undefined =>
+      store.has(key) ? (store.get(key) as T) : defaultValue,
+    update: async (key: string, value: unknown) => {
+      store.set(key, value);
+    },
+    keys: () => Array.from(store.keys()),
+  };
+}
 
 const extensionContext: Record<string, unknown> = {
   subscriptions: [],
   extensionPath: "",
   extensionUri: Uri.file(""),
-  workspaceState: {},
-  globalState: {},
+  workspaceState: createMementoStub(),
+  globalState: createMementoStub(),
   secrets: { get: () => Promise.resolve(undefined), store: () => Promise.resolve(), delete: () => Promise.resolve() },
 };
 

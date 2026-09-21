@@ -46,22 +46,16 @@ export function gitCloneUrl(
   _password: string,
   repoName: string
 ): string {
-  return `${serverUrl.replace(/\/$/, "")}/api/v1/blog/git/${repoName}.git`;
+  return `${serverUrl.replace(/\/$/, "")}/api/v1/blog/git/${encodeURIComponent(repoName)}.git`;
 }
 
-interface TokenResp<T> {
-  code: number;
-  msg: string;
-  data: T | null;
-}
-
-/** 通用请求：带 Bearer，POST/PUT/DELETE 走 json body；解包 ApiResp 直接返回 data。 */
+/** 通用请求：带 Bearer，POST/PUT/DELETE 走 json body；解包 ApiResp 返回 data（无体时为 null）。 */
 async function authed<T>(
   serverUrl: string,
   token: string,
   path: string,
   init: { method?: string; body?: unknown } = {}
-): Promise<T> {
+): Promise<T | null> {
   const res = await fetch(`${serverUrl.replace(/\/$/, "")}${path}`, {
     method: init.method ?? "GET",
     headers: {
@@ -70,11 +64,19 @@ async function authed<T>(
     },
     body: init.body !== undefined ? JSON.stringify(init.body) : undefined,
   });
-  const body = (await res.json().catch(() => null)) as TokenResp<T> | null;
-  if (!res.ok || !body || body.code !== 0) {
-    throw new Error(body?.msg || `HTTP ${res.status}`);
+  // 先取文本再解析：DELETE 常见的 204/空体，以及网关 HTML 错误页都不该被当成 JSON 解析失败。
+  const raw = await res.text().catch(() => "");
+  let body: ApiResp<T> | null = null;
+  if (raw) {
+    try {
+      body = JSON.parse(raw) as ApiResp<T>;
+    } catch {
+      body = null;
+    }
   }
-  return body.data as T;
+  if (!res.ok) throw new Error(body?.msg || `HTTP ${res.status}`);
+  if (body && body.code !== 0) throw new Error(body.msg || `HTTP ${res.status}`);
+  return body ? body.data : null;
 }
 
 export async function createSeries(
@@ -82,10 +84,13 @@ export async function createSeries(
   token: string,
   input: { title: string; repo_name: string }
 ): Promise<BlogSeries> {
-  return authed<BlogSeries>(serverUrl, token, "/api/v1/blog/series", {
+  const data = await authed<BlogSeries>(serverUrl, token, "/api/v1/blog/series", {
     method: "POST",
     body: input,
   });
+  // 声明返回非空：data 为 null 时在此报错，而不是让调用方在后面收到无关的 TypeError。
+  if (!data) throw new Error("创建系列失败：服务端未返回系列数据");
+  return data;
 }
 
 export async function deleteSeries(serverUrl: string, token: string, id: number): Promise<void> {
@@ -97,7 +102,12 @@ export async function toggleStar(
   token: string,
   id: number
 ): Promise<{ starred: boolean }> {
-  return authed<{ starred: boolean }>(serverUrl, token, `/api/v1/blog/series/${id}/star`, {
-    method: "POST",
-  });
+  const data = await authed<{ starred: boolean }>(
+    serverUrl,
+    token,
+    `/api/v1/blog/series/${id}/star`,
+    { method: "POST" }
+  );
+  if (!data) throw new Error("星标失败：服务端未返回结果");
+  return data;
 }

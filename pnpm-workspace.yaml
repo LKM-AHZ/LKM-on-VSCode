@@ -1,7 +1,12 @@
 # pnpm 工作区配置。
+# 本仓库是单包（只有根 . 作为 importer），暂无工作区成员，故不声明 packages 字段；
+# 若日后拆出子包，需在此补 packages: 才能被解析为工作区成员。
+#
 # 授权 esbuild 安装平台二进制，否则 vitest 依赖的 esbuild 无法运行。
 onlyBuiltDependencies:
   - esbuild
 
+# pnpm 11 的生效键是 allowBuilds（name→bool）；onlyBuiltDependencies 保留给旧版 pnpm。
+# 删掉这里的许可会让 esbuild 的安装脚本被忽略，pnpm 直接以 ERR_PNPM_IGNORED_BUILDS 失败。
 allowBuilds:
   esbuild: true

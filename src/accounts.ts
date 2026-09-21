@@ -39,7 +39,12 @@ export function findAccount(accounts: AccountMeta[], key: string): AccountMeta |
 /** 追加账号；同 key 已存在则替换（更新 serverUrl/username 冗余字段），去重。 */
 export function addAccount(accounts: AccountMeta[], serverUrl: string, username: string): AccountMeta[] {
   const key = accountKey(serverUrl, username);
-  const fresh = mkAccount(serverUrl, username);
+  const existing = findAccount(accounts, key);
+  // 重复添加同一账号时要保留已有 series 映射：`mkAccount` 会给空映射，
+  // 直接替换会把用户已克隆的系列映射全部抹掉。
+  const fresh: AccountMeta = existing
+    ? { ...existing, key, serverUrl, username }
+    : mkAccount(serverUrl, username);
   const rest = accounts.filter((a) => a.key !== key);
   return [...rest, fresh];
 }
@@ -84,6 +89,9 @@ export function seriesId(account: AccountMeta, repoName: string): number | undef
 export function normalizeSeriesMap(series: Record<string, string | SeriesEntry>): SeriesMap {
   const out: SeriesMap = {};
   for (const [repo, v] of Object.entries(series)) {
+    // repo 来自持久化/后端数据，`__proto__` 等键会走到 Object.prototype 的访问器上，
+    // 结果是映射丢失并改写原型，故显式跳过。
+    if (repo === "__proto__" || repo === "constructor" || repo === "prototype") continue;
     out[repo] = typeof v === "string" ? { dir: v } : { ...v };
   }
   return out;

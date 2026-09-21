@@ -7,20 +7,35 @@ const SEP = "\u0000";
 /** 按账号 SecretStorage key 的前缀。 */
 const CRED_PREFIX = "lkm.blog.credentials.";
 
-/** 按账号 key 生成 SecretStorage key（base64 避免 key 中 `:` `/` 等非法字符）。 */
+/** 按账号 key 生成 SecretStorage key；base64 把任意账号串编码成无空白/控制字符的稳定 key。 */
 function credKeyFor(key: string): string {
   return CRED_PREFIX + Buffer.from(key).toString("base64");
+}
+
+/**
+ * 解析 `username\0password`。
+ * 只按第一个分隔符切分：密码里若含 NUL 也原样保留，不会被截断。
+ */
+function decodeCredential(raw: string | undefined): { username: string; password: string } | null {
+  if (!raw) return null;
+  const sep = raw.indexOf(SEP);
+  if (sep < 0) return null;
+  const username = raw.slice(0, sep);
+  const password = raw.slice(sep + SEP.length);
+  // 用户名或密码任一为空都视为无效凭证（空密码不能被当作有效凭证绕过录入）。
+  if (!username || !password) return null;
+  return { username, password };
+}
+
+/** 编码 `username\0password`（NUL 不会出现在用户名/密码中）。 */
+function encodeCredential(username: string, password: string): string {
+  return username + SEP + password;
 }
 
 export async function getCredentials(
   context: vscode.ExtensionContext
 ): Promise<{ username: string; password: string } | null> {
-  const raw = await context.secrets.get(CRED_KEY);
-  if (!raw) return null;
-  const [username, password] = raw.split(SEP);
-  // 用户名或密码任一为空都视为无效凭证（空密码不能被当作有效凭证绕过录入）。
-  if (!username || !password) return null;
-  return { username, password };
+  return decodeCredential(await context.secrets.get(CRED_KEY));
 }
 
 export async function saveCredentials(
@@ -28,7 +43,7 @@ export async function saveCredentials(
   username: string,
   password: string
 ): Promise<void> {
-  await context.secrets.store(CRED_KEY, username + SEP + password);
+  await context.secrets.store(CRED_KEY, encodeCredential(username, password));
 }
 
 export async function clearCredentials(
@@ -59,6 +74,10 @@ export async function promptForCredentials(
 }
 
 export function basicHeader(username: string, password: string): string {
+  // RFC 7617：Basic user-id 不能含冒号，否则服务端解析出的用户名与本地记录不一致。
+  if (username.includes(":")) {
+    throw new Error("用户名不能包含冒号（Basic 认证不允许）");
+  }
   return "Basic " + Buffer.from(`${username}:${password}`).toString("base64");
 }
 
@@ -67,11 +86,7 @@ export async function getCredentialsForAccount(
   context: vscode.ExtensionContext,
   key: string
 ): Promise<{ username: string; password: string } | null> {
-  const raw = await context.secrets.get(credKeyFor(key));
-  if (!raw) return null;
-  const [username, password] = raw.split(SEP);
-  if (!username || !password) return null;
-  return { username, password };
+  return decodeCredential(await context.secrets.get(credKeyFor(key)));
 }
 
 /** 按账号 key 写凭证。 */
@@ -81,7 +96,7 @@ export async function saveCredentialsForAccount(
   username: string,
   password: string
 ): Promise<void> {
-  await context.secrets.store(credKeyFor(key), username + SEP + password);
+  await context.secrets.store(credKeyFor(key), encodeCredential(username, password));
 }
 
 /** 按账号 key 删除凭证。 */
@@ -109,6 +124,14 @@ export async function promptCredentialsForAccount(
     })) ?? "";
   if (!password) return null;
   const key = accountKey(serverUrl, username);
-  await saveCredentialsForAccount(context, key, username, password);
+  try {
+    await saveCredentialsForAccount(context, key, username, password);
+  } catch (err) {
+    // 写失败不能让用户以为密码已保存；返回 null 并显式报错。
+    void vscode.window.showErrorMessage(
+      `保存凭证失败：${err instanceof Error ? err.message : String(err)}`
+    );
+    return null;
+  }
   return { username, password };
 }

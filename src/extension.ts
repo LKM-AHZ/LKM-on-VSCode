@@ -132,10 +132,12 @@ export function registerCommands(
    * 非 Error 拒绝（如字符串）先归一，避免 .includes 在 undefined 上抛错。
    */
   function isAuthError(err: unknown): boolean {
-    const msg = err instanceof Error ? err.message : String(err);
     const status =
       err instanceof Error && "status" in err ? (err as { status: unknown }).status : undefined;
-    return (typeof status === "number" && status === 401) || msg.includes("401") || msg.includes("Unauthorized");
+    if (typeof status === "number") return status === 401;
+    const msg = err instanceof Error ? err.message : String(err);
+    // "401" 必须单独成词：URL/repo 名里的 1401 之类不应被当成认证失败而触发清凭证+重登。
+    return /(^|\D)401(\D|$)/.test(msg) || /\bUnauthorized\b/.test(msg);
   }
 
   /** 401 时令该账号缓存 token 失效（spec §4），使下一次操作重新兑换。 */
@@ -179,11 +181,12 @@ export function registerCommands(
     }
     if (!authFailed) return null;
 
-    // 认证失败或凭证缺失：清除旧凭证并引导重新录入。
-    await clearCredentialsForAccount(context, account.key);
+    // 认证失败或凭证缺失：引导重新录入。提示放在录入之前，否则用户输完密码才看到「已失效」。
+    // 不再预防性清除旧凭证：promptCredentialsForAccount 成功时会覆写 SecretStorage，
+    // 而用户取消时必须保留原凭证，避免一次误判把有效凭证永久清掉。
+    void vscode.window.showInformationMessage("登录凭证已失效，请重新输入密码");
     const creds = await promptCredentialsForAccount(context, account.serverUrl, account.username);
-    if (!creds) return null; // 用户取消。
-    void vscode.window.showInformationMessage("登录凭证已失效，请重新输入密码后再试");
+    if (!creds) return null; // 用户取消：保留原凭证。
 
     // 用新凭证重建 TokenManager 并重试一次；仍失败则放弃。
     tokenManagers.delete(account.key);
@@ -231,6 +234,32 @@ export function registerCommands(
     const updated = mapSeries(acc, repoName, acc.series[repoName]?.dir ?? "", hit.id);
     persistAccount(updated);
     return { id: hit.id, account: updated };
+  }
+
+  /**
+   * 让用户从当前账号已映射的系列里选一个并解析其后端 id。
+   * 无映射/用户取消/解析失败都返回 null（已给出对应提示），供删除、星标等命令复用。
+   */
+  async function pickMappedSeries(
+    acc: AccountMeta,
+    placeHolder: string
+  ): Promise<{ repo: string; resolved: { id: number; account: AccountMeta } } | null> {
+    const entries = Object.entries(acc.series);
+    if (entries.length === 0) {
+      vscode.window.showWarningMessage("当前账号没有已映射系列");
+      return null;
+    }
+    const picked = await vscode.window.showQuickPick(
+      entries.map(([repo]) => ({ label: repo, repo })),
+      { placeHolder }
+    );
+    if (!picked) return null;
+    const resolved = await ensureSeriesId(acc, picked.repo);
+    if (!resolved) {
+      vscode.window.showErrorMessage(`无法确定系列 ${picked.repo} 的 id，可能已被删除`);
+      return null;
+    }
+    return { repo: picked.repo, resolved };
   }
 
   // ---- LKM: Add Account ----
@@ -315,12 +344,7 @@ export function registerCommands(
     };
     const outcome = await runCloneForAccount(context, acc, deps);
     if (outcome.kind === "cloned") {
-      // 写回映射
-      const idx = accounts.findIndex((a) => a.key === outcome.account.key);
-      if (idx >= 0) accounts = accounts.map((a) => (a.key === outcome.account.key ? outcome.account : a));
-      else accounts = [...accounts, outcome.account];
-      saveAccounts(context, accounts);
-      if (current && current.key === outcome.account.key) setCurrent(outcome.account);
+      persistAccount(outcome.account); // 复用统一写回逻辑，避免与 persistAccount 各改一处。
       vscode.window.showInformationMessage(outcome.message);
     } else if (outcome.kind === "error") {
       vscode.window.showErrorMessage(outcome.message);
@@ -365,7 +389,11 @@ export function registerCommands(
     if (!repoName) return;
     // 取 token，认证失败会升级为清凭证+重录（spec §4/§10）。
     const tok = await ensureAuthedToken(acc);
-    if (!tok) return;
+    if (!tok) {
+      // 网络失败或用户在重录弹窗里取消：必须给反馈，否则命令静默无响应。
+      vscode.window.showErrorMessage("未获取到登录凭证，创建已取消");
+      return;
+    }
     try {
       const s = await createSeries(acc.serverUrl, tok, { title, repo_name: repoName });
       vscode.window.showInformationMessage(`已创建系列 ${s.title}`);
@@ -379,67 +407,41 @@ export function registerCommands(
   async function handleDeleteSeries() {
     const acc = await ensureCurrent();
     if (!acc) return;
-    const entries = Object.entries(acc.series);
-    if (entries.length === 0) {
-      vscode.window.showWarningMessage("当前账号没有已映射系列");
-      return;
-    }
-    const picked = await vscode.window.showQuickPick(
-      entries.map(([repo]) => ({ label: repo, repo })),
-      { placeHolder: "选择要删除的系列" }
-    );
-    if (!picked) return;
+    const sel = await pickMappedSeries(acc, "选择要删除的系列");
+    if (!sel) return;
     const ok = await vscode.window.showWarningMessage(
-      `确认删除系列 ${picked.repo}？将删除远端内容并移除本地映射。`,
+      `确认删除系列 ${sel.repo}？将删除远端内容并移除本地映射。`,
       { modal: true },
       "删除"
     );
     if (ok !== "删除") return;
-    const resolved = await ensureSeriesId(acc, picked.repo);
-    if (!resolved) {
-      vscode.window.showErrorMessage(`无法确定系列 ${picked.repo} 的 id，可能已被删除`);
-      return;
-    }
-    const tok = await ensureAuthedToken(resolved.account);
+    const tok = await ensureAuthedToken(sel.resolved.account);
     if (!tok) return;
     try {
-      await deleteSeries(resolved.account.serverUrl, tok, resolved.id);
+      await deleteSeries(sel.resolved.account.serverUrl, tok, sel.resolved.id);
     } catch (err) {
-      onAuthError(resolved.account.key, err);
+      onAuthError(sel.resolved.account.key, err);
       vscode.window.showErrorMessage(`删除失败：${(err as Error).message}`);
       return;
     }
-    const un = unmapSeries(resolved.account, picked.repo);
+    const un = unmapSeries(sel.resolved.account, sel.repo);
     persistAccount(un);
-    vscode.window.showInformationMessage(`已删除系列 ${picked.repo}`);
+    vscode.window.showInformationMessage(`已删除系列 ${sel.repo}`);
   }
 
   // 星标：接真实 series id，调 toggleStar。
   async function handleToggleStar() {
     const acc = await ensureCurrent();
     if (!acc) return;
-    const entries = Object.entries(acc.series);
-    if (entries.length === 0) {
-      vscode.window.showWarningMessage("当前账号没有已映射系列");
-      return;
-    }
-    const picked = await vscode.window.showQuickPick(
-      entries.map(([repo]) => ({ label: repo, repo })),
-      { placeHolder: "选择要加星/取消星的系列" }
-    );
-    if (!picked) return;
-    const resolved = await ensureSeriesId(acc, picked.repo);
-    if (!resolved) {
-      vscode.window.showErrorMessage(`无法确定系列 ${picked.repo} 的 id，可能已被删除`);
-      return;
-    }
-    const tok = await ensureAuthedToken(resolved.account);
+    const sel = await pickMappedSeries(acc, "选择要加星/取消星的系列");
+    if (!sel) return;
+    const tok = await ensureAuthedToken(sel.resolved.account);
     if (!tok) return;
     try {
-      const s = await toggleStar(resolved.account.serverUrl, tok, resolved.id);
-      vscode.window.showInformationMessage(s.starred ? `已加星 ${picked.repo}` : `已取消星 ${picked.repo}`);
+      const s = await toggleStar(sel.resolved.account.serverUrl, tok, sel.resolved.id);
+      vscode.window.showInformationMessage(s.starred ? `已加星 ${sel.repo}` : `已取消星 ${sel.repo}`);
     } catch (err) {
-      onAuthError(resolved.account.key, err);
+      onAuthError(sel.resolved.account.key, err);
       vscode.window.showErrorMessage(`星标操作失败：${(err as Error).message}`);
     }
   }
@@ -520,6 +522,8 @@ function startAutoSync(
     if (e.focused && settings().pullOnFocus) void pullAll();
   });
 
+  // auto-commit/push 尚未实现：首次触发时显式告知一次，避免用户以为保存已被提交推送。
+  let autoPushWarned = false;
   const onSave = vscode.workspace.onDidSaveTextDocument((doc) => {
     const cfg = settings();
     if (!cfg.autoPushEnabled) return;
@@ -527,7 +531,20 @@ function startAutoSync(
     if (!acc || !doc.fileName) return;
     const dir = pathBelongsToAccount(doc.fileName, acc);
     if (!dir) return;
-    void getGitByDir(dir).then((git) => git && void gitRemoting(git, cfg));
+    if (!autoPushWarned) {
+      autoPushWarned = true;
+      void vscode.window.showWarningMessage(
+        "lkm.autoPush.enabled 尚未实现自动提交/推送，保存文件不会产生任何 git 操作"
+      );
+    }
+    void getGitByDir(dir)
+      .then((git) => (git ? gitRemoting(git, cfg) : undefined))
+      .catch((err) => {
+        // 不能让它变成未处理的 Promise 拒绝：用户否则完全看不到自动同步失败。
+        void vscode.window.showErrorMessage(
+          `自动同步失败：${err instanceof Error ? err.message : String(err)}`
+        );
+      });
   });
 
   return new vscode.Disposable(() => {
@@ -542,7 +559,8 @@ function startAutoSync(
  *
  * 占位：GitRepositoryHandle 只有 pull/push，缺少 add/commit 能力。
  * 实际 auto-commit+push 需要 git.ts 扩展 commitAndPush（add -A + commit "lkm: auto-sync" + push），
- * 属明确后续项，本版不假实现。该函数仅在 autoPush 开启（默认关）时才会被调用。
+ * 属明确后续项，本版不假实现。该函数仅在 autoPush 开启（默认关）时才会被调用，
+ * 调用方已在首次触发时给出「尚未实现」的显式提示，避免静默无效果。
  */
 async function gitRemoting(_git: { pull(): Promise<void>; push(): Promise<void> }, _cfg: SyncSettings): Promise<void> {
   // 占位：git.ts 需扩展 commitAndPush（add -A + commit "lkm: auto-sync" + push）在此接线。
@@ -553,7 +571,9 @@ export function activate(context: vscode.ExtensionContext): void {
   // 账号持久化交给 registerCommands 内部闭包；此处注册 provider 与命令。
   const provider = registerCommands(context, vscode.commands.registerCommand.bind(vscode.commands), []);
   context.subscriptions.push(
-    vscode.window.registerTreeDataProvider(MANAGE_SERIES_VIEW, provider as never)
+    vscode.window.registerTreeDataProvider(MANAGE_SERIES_VIEW, provider),
+    // provider 持有 EventEmitter，随扩展停用一起 dispose，避免重建时泄漏监听。
+    provider
   );
   // 注册自动同步副作用，随停用一起清理。
   context.subscriptions.push(

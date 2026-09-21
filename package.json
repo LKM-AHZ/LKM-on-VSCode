@@ -98,7 +98,7 @@
         "lkm.autoPush.enabled": {
           "type": "boolean",
           "default": false,
-          "description": "打开自动保存推送（add -A + commit + push）。默认关闭，且新增改动尚未实现 commit 能力。"
+          "description": "（暂未生效）自动保存推送（add -A + commit + push）。默认关闭；git add/commit/push 能力尚未实现，开启后保存文件不会产生任何 git 操作。"
         }
       }
     }
@@ -107,6 +107,7 @@
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "test": "vitest run",
+    "vscode:prepublish": "pnpm run compile",
     "package": "vsce package"
   },
   "devDependencies": {

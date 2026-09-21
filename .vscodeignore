@@ -1,8 +1,14 @@
 test/**
 node_modules/**
-.venv/**
 .vscode/**
-*.map
+**/*.map
 **/*.tsbuildinfo
 vitest.config.ts
 tsconfig.json
+
+# 无打包器，TS 源码仅在开发期使用，运行时只需 dist/
+src/**
+coverage/**
+.github/**
+*.vsix
+package-lock.json
