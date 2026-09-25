@@ -125,9 +125,9 @@ describe("extension 401 升级", () => {
     //  2) 重建后用新凭证 login → ok
     //  3) createSeries API → ok
     const fetchMock = vi.fn()
-      .mockResolvedValueOnce(jsonResp({ code: 401, msg: "Unauthorized", data: null }, 401))
-      .mockResolvedValueOnce(jsonResp({ code: 0, msg: "ok", data: { access_token: "tok2" } }))
-      .mockResolvedValueOnce(jsonResp({ code: 0, msg: "ok", data: { id: 9, title: "My Blog", repo_name: "my-blog", status: "ACTIVE" } }));
+      .mockResolvedValueOnce(jsonResp({ code: 401, message: "Unauthorized", data: null }, 401))
+      .mockResolvedValueOnce(jsonResp({ code: 0, message: "ok", data: { access_token: "tok2" } }))
+      .mockResolvedValueOnce(jsonResp({ code: 0, message: "ok", data: { id: 9, title: "My Blog", repo_name: "my-blog", status: "ACTIVE" } }));
     vi.stubGlobal("fetch", fetchMock);
 
     // 捕获各命令回调，手动驱动 createSeries handler。
@@ -205,8 +205,8 @@ describe("extension 删除系列 / 星标", () => {
     vi.spyOn(vscode.window, "showWarningMessage").mockResolvedValue("删除" as never);
     // fetch 序列：login 换 token → deleteSeries（有 id，故不调 listSeries）
     const fetchMock = vi.fn()
-      .mockResolvedValueOnce(jsonResp({ code: 0, msg: "ok", data: { access_token: "tok" } }))
-      .mockResolvedValueOnce(jsonResp({ code: 0, msg: "ok", data: null }));
+      .mockResolvedValueOnce(jsonResp({ code: 0, message: "ok", data: { access_token: "tok" } }))
+      .mockResolvedValueOnce(jsonResp({ code: 0, message: "ok", data: null }));
     vi.stubGlobal("fetch", fetchMock);
 
     const handler = env.callbacks.get(DELETE_SERIES_CMD)!;
@@ -223,8 +223,8 @@ describe("extension 删除系列 / 星标", () => {
     const env = makeEnv();
     vi.spyOn(vscode.window, "showQuickPick").mockResolvedValue({ label: "my-blog", repo: "my-blog" } as never);
     const fetchMock = vi.fn()
-      .mockResolvedValueOnce(jsonResp({ code: 0, msg: "ok", data: { access_token: "tok" } }))
-      .mockResolvedValueOnce(jsonResp({ code: 0, msg: "ok", data: { starred: true } }));
+      .mockResolvedValueOnce(jsonResp({ code: 0, message: "ok", data: { access_token: "tok" } }))
+      .mockResolvedValueOnce(jsonResp({ code: 0, message: "ok", data: { starred: true } }));
     vi.stubGlobal("fetch", fetchMock);
 
     const handler = env.callbacks.get(TOGGLE_STAR_CMD)!;
@@ -267,9 +267,9 @@ describe("extension 删除系列 / 星标", () => {
     vi.spyOn(vscode.window, "showWarningMessage").mockResolvedValue("删除" as never);
     // fetch 序列：login → listSeries(反查得 id=5) → deleteSeries
     const fetchMock = vi.fn()
-      .mockResolvedValueOnce(jsonResp({ code: 0, msg: "ok", data: { access_token: "tok" } }))
-      .mockResolvedValueOnce(jsonResp({ code: 0, msg: "ok", data: { items: [{ id: 5, title: "My Blog", repo_name: "my-blog", status: "ACTIVE" }] } }))
-      .mockResolvedValueOnce(jsonResp({ code: 0, msg: "ok", data: null }));
+      .mockResolvedValueOnce(jsonResp({ code: 0, message: "ok", data: { access_token: "tok" } }))
+      .mockResolvedValueOnce(jsonResp({ code: 0, message: "ok", data: { items: [{ id: 5, title: "My Blog", repo_name: "my-blog", status: "ACTIVE" }] } }))
+      .mockResolvedValueOnce(jsonResp({ code: 0, message: "ok", data: null }));
     vi.stubGlobal("fetch", fetchMock);
 
     const handler = callbacks.get(DELETE_SERIES_CMD)!;
@@ -315,8 +315,8 @@ describe("extension 删除系列 / 星标", () => {
     vi.spyOn(vscode.window, "showWarningMessage").mockResolvedValue("删除" as never);
     // fetch 序列：login 换 token → listSeries 返回空 items（反查未命中）
     const fetchMock = vi.fn()
-      .mockResolvedValueOnce(jsonResp({ code: 0, msg: "ok", data: { access_token: "tok" } }))
-      .mockResolvedValueOnce(jsonResp({ code: 0, msg: "ok", data: { items: [] } }));
+      .mockResolvedValueOnce(jsonResp({ code: 0, message: "ok", data: { access_token: "tok" } }))
+      .mockResolvedValueOnce(jsonResp({ code: 0, message: "ok", data: { items: [] } }));
     vi.stubGlobal("fetch", fetchMock);
     const handler = callbacks.get(DELETE_SERIES_CMD)!;
     await handler();
@@ -374,9 +374,9 @@ describe("extension 迁移旧系列 string 值", () => {
     vi.spyOn(vscode.window, "showWarningMessage").mockResolvedValue("删除" as never);
     // 迁移成 { dir }（无 id）→ 走反查路径：login → listSeries → deleteSeries
     const fetchMock = vi.fn()
-      .mockResolvedValueOnce(jsonResp({ code: 0, msg: "ok", data: { access_token: "tok" } }))
-      .mockResolvedValueOnce(jsonResp({ code: 0, msg: "ok", data: { items: [{ id: 5, title: "My Blog", repo_name: "my-blog", status: "ACTIVE" }] } }))
-      .mockResolvedValueOnce(jsonResp({ code: 0, msg: "ok", data: null }));
+      .mockResolvedValueOnce(jsonResp({ code: 0, message: "ok", data: { access_token: "tok" } }))
+      .mockResolvedValueOnce(jsonResp({ code: 0, message: "ok", data: { items: [{ id: 5, title: "My Blog", repo_name: "my-blog", status: "ACTIVE" }] } }))
+      .mockResolvedValueOnce(jsonResp({ code: 0, message: "ok", data: null }));
     vi.stubGlobal("fetch", fetchMock);
 
     const handler = env.callbacks.get(DELETE_SERIES_CMD)!;

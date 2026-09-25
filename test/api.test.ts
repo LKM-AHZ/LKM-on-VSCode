@@ -11,7 +11,7 @@ describe("api", () => {
       new Response(
         JSON.stringify({
           code: 0,
-          msg: "ok",
+          message: "ok",
           data: {
             items: [
               { id: 1, title: "我的博客", repo_name: "my-blog", status: "ACTIVE" },
@@ -37,7 +37,7 @@ describe("api", () => {
       new Response(
         JSON.stringify({
           code: 0,
-          msg: "ok",
+          message: "ok",
           data: {
             items: [
               { id: 1, title: "a", repo_name: "a", status: "ACTIVE" },
@@ -77,7 +77,7 @@ describe("api CRUD", () => {
 
   it("createSeries POST /series 带访问令牌", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
-      jsonResp({ code: 0, msg: "ok", data: { id: 9, title: "t", repo_name: "r", status: "ACTIVE" } })
+      jsonResp({ code: 0, message: "ok", data: { id: 9, title: "t", repo_name: "r", status: "ACTIVE" } })
     );
     vi.stubGlobal("fetch", fetchMock);
     await createSeries("https://h", "tok", { title: "t", repo_name: "r" });
@@ -90,7 +90,7 @@ describe("api CRUD", () => {
   });
 
   it("deleteSeries DELETE /series/{id} 带 Bearer", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(jsonResp({ code: 0, msg: "ok", data: null }));
+    const fetchMock = vi.fn().mockResolvedValue(jsonResp({ code: 0, message: "ok", data: null }));
     vi.stubGlobal("fetch", fetchMock);
     await deleteSeries("https://h", "tok", 42);
     const call = fetchMock.mock.calls[0] as [string, RequestInit];
@@ -101,7 +101,7 @@ describe("api CRUD", () => {
   });
 
   it("toggleStar POST /series/{id}/star 带 Bearer", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(jsonResp({ code: 0, msg: "ok", data: { starred: true } }));
+    const fetchMock = vi.fn().mockResolvedValue(jsonResp({ code: 0, message: "ok", data: { starred: true } }));
     vi.stubGlobal("fetch", fetchMock);
     const s = await toggleStar("https://h", "tok", 7);
     expect(s.starred).toBe(true);
@@ -113,21 +113,21 @@ describe("api CRUD", () => {
   });
 
   it("createSeries 非 ok 抛 Error(msg)", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(jsonResp({ code: 1001, msg: "标题重复", data: null }, 400));
+    const fetchMock = vi.fn().mockResolvedValue(jsonResp({ code: 1001, message: "标题重复", data: null }, 400));
     vi.stubGlobal("fetch", fetchMock);
     await expect(createSeries("https://h", "tok", { title: "t", repo_name: "r" })).rejects.toThrow("标题重复");
     vi.unstubAllGlobals();
   });
 
   it("createSeries 非 0 code 抛 Error", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(jsonResp({ code: 2000, msg: "未授权", data: null }, 200));
+    const fetchMock = vi.fn().mockResolvedValue(jsonResp({ code: 2000, message: "未授权", data: null }, 200));
     vi.stubGlobal("fetch", fetchMock);
     await expect(createSeries("https://h", "tok", { title: "t", repo_name: "r" })).rejects.toThrow("未授权");
     vi.unstubAllGlobals();
   });
 
   it("deleteSeries 非 ok 抛 Error(msg)", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(jsonResp({ code: 404, msg: "不存在", data: null }, 404));
+    const fetchMock = vi.fn().mockResolvedValue(jsonResp({ code: 404, message: "不存在", data: null }, 404));
     vi.stubGlobal("fetch", fetchMock);
     await expect(deleteSeries("https://h", "tok", 99)).rejects.toThrow("不存在");
     vi.unstubAllGlobals();

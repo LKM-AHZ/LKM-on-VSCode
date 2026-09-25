@@ -7,8 +7,9 @@ export interface BlogSeries {
 
 interface ApiResp<T> {
   code: number;
-  msg: string;
+  message: string;
   data: T | null;
+  request_id?: string;
 }
 
 interface ListData<T> {
@@ -31,7 +32,7 @@ export async function listSeries(
   }
   const body = (await res.json()) as ApiResp<ListData<BlogSeries>>;
   if (body.code !== 0 || !body.data) {
-    throw new Error(body.msg || "系列列表接口返回错误");
+    throw new Error(body.message || "系列列表接口返回错误");
   }
   return body.data.items.filter((s) => s.status === "ACTIVE");
 }
@@ -74,8 +75,9 @@ async function authed<T>(
       body = null;
     }
   }
-  if (!res.ok) throw new Error(body?.msg || `HTTP ${res.status}`);
-  if (body && body.code !== 0) throw new Error(body.msg || `HTTP ${res.status}`);
+  if (!res.ok) throw new Error(body?.message || `HTTP ${res.status}`);
+  if (body && body.code !== 0)
+    throw new Error(body.message || `HTTP ${res.status}`);
   return body ? body.data : null;
 }
 

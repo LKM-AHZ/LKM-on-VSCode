@@ -11,7 +11,7 @@ function jsonResp(body: unknown, status = 200) {
 describe("auth", () => {
   it("loginForToken 返回 access_token", async () => {
     const fetchFn = vi.fn().mockResolvedValue(
-      jsonResp({ code: 0, msg: "ok", data: { access_token: "abc" } })
+      jsonResp({ code: 0, message: "ok", data: { access_token: "abc" } })
     );
     const t = await loginForToken("https://h", "alice", "pw", fetchFn as never);
     expect(t).toBe("abc");
@@ -21,13 +21,13 @@ describe("auth", () => {
   });
 
   it("loginForToken 非 0 code 抛错", async () => {
-    const fetchFn = vi.fn().mockResolvedValue(jsonResp({ code: 1001, msg: "bad", data: null }));
+    const fetchFn = vi.fn().mockResolvedValue(jsonResp({ code: 1001, message: "bad", data: null }));
     await expect(loginForToken("https://h", "a", "pw", fetchFn as never)).rejects.toThrow("bad");
   });
 
   it("createTokenManager 缓存复用，不重复调 login", async () => {
     const fetchFn = vi.fn().mockResolvedValue(
-      jsonResp({ code: 0, msg: "ok", data: { access_token: "tok1" } })
+      jsonResp({ code: 0, message: "ok", data: { access_token: "tok1" } })
     );
     const m = createTokenManager({ serverUrl: "https://h", getCredentials: async () => ({ username: "alice", password: "pw" }), fetchFn: fetchFn as never });
     const a = await m.getToken();
@@ -39,7 +39,7 @@ describe("auth", () => {
 
   it("invalidate 后重新换 token", async () => {
     let n = 0;
-    const fetchFn = vi.fn().mockImplementation(async () => jsonResp({ code: 0, msg: "ok", data: { access_token: `t${++n}` } }));
+    const fetchFn = vi.fn().mockImplementation(async () => jsonResp({ code: 0, message: "ok", data: { access_token: `t${++n}` } }));
     const m = createTokenManager({ serverUrl: "https://h", getCredentials: async () => ({ username: "alice", password: "pw" }), fetchFn: fetchFn as never });
     expect(await m.getToken()).toBe("t1");
     m.invalidate();
@@ -53,7 +53,7 @@ describe("auth", () => {
 
   it("缓存 token 15 分钟内复用，不重复调 login", async () => {
     let n = 0;
-    const fetchFn = vi.fn().mockImplementation(async () => jsonResp({ code: 0, msg: "ok", data: { access_token: `t${++n}` } }));
+    const fetchFn = vi.fn().mockImplementation(async () => jsonResp({ code: 0, message: "ok", data: { access_token: `t${++n}` } }));
     const m = createTokenManager({ serverUrl: "https://h", getCredentials: async () => ({ username: "alice", password: "pw" }), fetchFn: fetchFn as never });
     expect(await m.getToken()).toBe("t1");
     expect(await m.getToken()).toBe("t1");
@@ -64,7 +64,7 @@ describe("auth", () => {
 
   it("token 超过 15 分钟过期则重新兑换", async () => {
     let n = 0;
-    const fetchFn = vi.fn().mockImplementation(async () => jsonResp({ code: 0, msg: "ok", data: { access_token: `t${++n}` } }));
+    const fetchFn = vi.fn().mockImplementation(async () => jsonResp({ code: 0, message: "ok", data: { access_token: `t${++n}` } }));
     const m = createTokenManager({ serverUrl: "https://h", getCredentials: async () => ({ username: "alice", password: "pw" }), fetchFn: fetchFn as never });
     const first = await m.getToken();
     expect(first).toBe("t1");

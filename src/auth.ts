@@ -9,18 +9,18 @@ export interface RestAuthDeps {
 /** 解包 ApiResp 并返回 data 的通用辅助。 */
 async function unpack<T>(res: Response): Promise<T> {
   // 先取文本再解析：401/5xx/网关错误页常返回空体或 HTML，直接 res.json() 会抛 SyntaxError
-  // 掩盖掉真正的 HTTP 状态码与服务端 msg。
+  // 掩盖掉真正的 HTTP 状态码与服务端 message。
   const raw = await res.text().catch(() => "");
-  let body: { code: number; msg: string; data: T | null } | null = null;
+  let body: { code: number; message: string; data: T | null } | null = null;
   if (raw) {
     try {
-      body = JSON.parse(raw) as { code: number; msg: string; data: T | null };
+      body = JSON.parse(raw) as { code: number; message: string; data: T | null };
     } catch {
       body = null;
     }
   }
   if (!res.ok || !body || body.code !== 0 || body.data === null) {
-    throw new Error(body?.msg || `HTTP ${res.status}`);
+    throw new Error(body?.message || `HTTP ${res.status}`);
   }
   return body.data;
 }
