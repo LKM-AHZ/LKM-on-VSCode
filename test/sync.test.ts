@@ -30,6 +30,12 @@ describe("sync 决策", () => {
     expect(pathBelongsToAccount("C:/x/a/other.md", nested)).toBe("C:/x/a");
   });
 
+  it("大小写敏感系统不把其他同名目录认作当前系列", () => {
+    if (process.platform === "win32" || process.platform === "darwin") return;
+    const linuxAccount: AccountMeta = { ...account, series: { blog: { dir: "/work/Blog" } } };
+    expect(pathBelongsToAccount("/work/blog/post.md", linuxAccount)).toBeNull();
+  });
+
   it("collectPullTargets 返回去重目录", () => {
     expect(collectPullTargets(account).sort()).toEqual(["C:/x/a-blog", "C:/x/b-lib"]);
   });

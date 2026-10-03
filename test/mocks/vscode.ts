@@ -14,6 +14,12 @@
  * 否则依赖配置的代码永远只看到默认值，读/写流程从未被真正走到。
  */
 const configStore = new Map<string, Map<string, unknown>>();
+const saveListeners = new Set<(document: unknown) => void>();
+const focusListeners = new Set<(state: { focused: boolean }) => void>();
+
+export function __emitDidSave(document: unknown): void {
+  for (const listener of saveListeners) listener(document);
+}
 
 export const workspace = {
   getConfiguration: (section = "") => {
@@ -34,6 +40,10 @@ export const workspace = {
     };
   },
   workspaceFolders: [],
+  onDidSaveTextDocument: (listener: (document: unknown) => void) => {
+    saveListeners.add(listener);
+    return { dispose: () => saveListeners.delete(listener) };
+  },
 };
 
 /**
@@ -70,6 +80,10 @@ export const window = {
   }),
   showOpenDialog: () => Promise.resolve(undefined),
   showSaveDialog: () => Promise.resolve(undefined),
+  onDidChangeWindowState: (listener: (state: { focused: boolean }) => void) => {
+    focusListeners.add(listener);
+    return { dispose: () => focusListeners.delete(listener) };
+  },
 };
 
 export const extensions = {
@@ -118,7 +132,8 @@ export const Uri = {
 };
 
 export const Disposable = class Disposable {
-  dispose(): void {}
+  constructor(private readonly callback?: () => void) {}
+  dispose(): void { this.callback?.(); }
 };
 
 /** TreeItem 的三种折叠状态枚举（与 vscode 真实取值一致：0/1/2）。 */

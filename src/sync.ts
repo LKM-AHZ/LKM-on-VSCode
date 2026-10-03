@@ -6,9 +6,12 @@ export interface SyncSettings {
   autoPushEnabled: boolean;
 }
 
-/** 归一化路径为小写正斜杠，便于跨平台前缀比较。 */
+/** 归一化分隔符；仅在通常大小写不敏感的平台折叠大小写。 */
 function norm(p: string): string {
-  return p.replace(/\\/g, "/").toLowerCase();
+  const normalized = p.replace(/\\/g, "/");
+  return process.platform === "win32" || process.platform === "darwin"
+    ? normalized.toLowerCase()
+    : normalized;
 }
 
 /** 判断到点该 pull：从未跑(null)或距上次已超 interval(分钟)。 */

@@ -98,7 +98,7 @@
         "lkm.autoPush.enabled": {
           "type": "boolean",
           "default": false,
-          "description": "（暂未生效）自动保存推送（add -A + commit + push）。默认关闭；git add/commit/push 能力尚未实现，开启后保存文件不会产生任何 git 操作。"
+          "description": "保存已映射系列中的文件时，自动提交该文件并推送。默认关闭；暂存区已有其他改动时会取消自动提交。"
         }
       }
     }

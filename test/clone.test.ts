@@ -48,7 +48,7 @@ function makeDeps(overrides: Partial<CloneDeps> = {}): CloneDeps {
     getConfig: (k) => (k === "lkm.serverUrl" ? "https://h/" : undefined),
     pickSeries: vi.fn(async () => SERIES[0]),
     pickTargetDir: vi.fn(async () => "/target/dir"),
-    doClone: vi.fn(async () => {}),
+    doClone: vi.fn(async () => "/target/dir/myblog"),
     ...overrides,
   };
 }
@@ -76,7 +76,7 @@ describe("runCloneFlow", () => {
   it("有已存凭证（有效 user/pass）→ 走完全流程 cloned，doClone 收到含 Basic 的 URL", async () => {
     const { context } = makeContext("alice\u0000s3cret");
     (listSeries as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(SERIES);
-    const doClone = vi.fn(async () => {});
+    const doClone = vi.fn(async () => "/target/dir/myblog");
     const deps = makeDeps({ doClone });
     const outcome = await runCloneFlow(context, deps);
     expect(outcome.kind).toBe("cloned");
@@ -159,8 +159,8 @@ describe("clone (按账号)", () => {
     return {
       getConfig: (k) => (k === "lkm.serverUrl" ? "https://h" : ""),
       pickSeries: async () => ({ id: 1, title: "我的博客", repo_name: "my-blog", status: "ACTIVE" }),
-      pickTargetDir: async () => "C:/x/my-blog",
-      doClone: async () => {},
+      pickTargetDir: async () => "C:/x",
+      doClone: async () => "C:/x/my-blog",
       ...over,
     };
   }
@@ -185,9 +185,10 @@ describe("clone (按账号)", () => {
     } as never;
     // 预置该账号密码到 SecretStorage（key 为账号 key 的 base64）
     await saveCredentialsForAccount(ctx, account.key, "alice", "secretpw");
-    const doClone = vi.fn().mockResolvedValue(undefined);
+    const doClone = vi.fn().mockResolvedValue("C:/x/my-blog");
+    const afterCloneHint = vi.fn();
 
-    const out = await runCloneForAccount(ctx, account, deps({ doClone }));
+    const out = await runCloneForAccount(ctx, account, deps({ doClone, afterCloneHint }));
     expect(out.kind).toBe("cloned");
     if (out.kind === "cloned") {
       expect(out.series.repo_name).toBe("my-blog");
@@ -196,6 +197,8 @@ describe("clone (按账号)", () => {
       expect(out.account.series["my-blog"]).toEqual({ dir: "C:/x/my-blog", id: 1 });
       expect(out.series.id).toBe(1); // clone 顺带写后端 id
       expect(doClone).toHaveBeenCalledOnce();
+      expect(doClone.mock.calls[0][1]).toBe("C:/x");
+      expect(afterCloneHint).toHaveBeenCalledWith("C:/x/my-blog");
       const url = doClone.mock.calls[0][0] as string;
       expect(url).toContain("/api/v1/blog/git/my-blog.git");
       expect(url.startsWith("https://alice:secretpw@h/")).toBe(true);
@@ -205,7 +208,7 @@ describe("clone (按账号)", () => {
   it("无凭证时提示录入，取消则 cancelled", async () => {
     const store: Record<string, string> = {};
     const ctx = { secrets: { get: async () => undefined, store: async () => {}, delete: async () => {} } } as never;
-    const out = await runCloneForAccount(ctx, account, deps({ doClone: async () => {} }));
+    const out = await runCloneForAccount(ctx, account, deps({ doClone: async () => "C:/x/my-blog" }));
     expect(out.kind).toBe("cancelled");
     expect(store).not.toHaveProperty("__never"); // secret 无残留
   });

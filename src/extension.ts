@@ -17,7 +17,7 @@ import {
 import { listSeries, createSeries, deleteSeries, toggleStar, BlogSeries } from "./api";
 import { createTokenManager, TokenManager } from "./auth";
 import { CloneDeps, runCloneForAccount } from "./clone";
-import { getActiveGitRepository, getGitByDir } from "./git";
+import { getActiveGitRepository, getGitByDir, GitRepositoryHandle } from "./git";
 import { SeriesTreeProvider } from "./tree";
 import { SyncSettings, shouldPullNow, pathBelongsToAccount, collectPullTargets } from "./sync";
 
@@ -46,12 +46,11 @@ export const MANAGE_SERIES_VIEW = "lkm.seriesTree";
 type RegisterFn = typeof vscode.commands.registerCommand;
 
 /**
- * 读 LKM 配置段的值。键形如 "lkm.serverUrl"，
- * 剥掉 "lkm." 前缀后落到配置段的同名键。
+ * 读 LKM 配置段的值。支持 "lkm.serverUrl" 与 "serverUrl" 两种调用形态。
  */
 function getConfig<T>(key: string, dflt: T): T {
   const section = "lkm";
-  const inner = key.slice(section.length + 1);
+  const inner = key.startsWith(`${section}.`) ? key.slice(section.length + 1) : key;
   return vscode.workspace.getConfiguration(section).get<T>(inner, dflt);
 }
 
@@ -331,10 +330,10 @@ export function registerCommands(
         });
         return dirs && dirs.length > 0 ? dirs[0].fsPath : undefined;
       },
-      doClone: async (url, dir) => {
+      doClone: async (url, dir, repoName) => {
         // 动态取最终实现，避免顶层副作用。
         const { cloneRepository } = await import("./git");
-        await cloneRepository(url, dir);
+        return cloneRepository(url, dir, repoName);
       },
       afterCloneHint: async (dir) => {
         void vscode.window.showInformationMessage(
@@ -476,10 +475,10 @@ function getCurrentAccountFromState(context: vscode.ExtensionContext): AccountMe
  *
  * - 定时器周期在启动时按配置算一次；每次 tick 再按最新配置决定是否 pull。
  * - pull 只读，失败静默（badge 由 tree provider 展示）。
- * - auto-push 默认关（lkm.autoPush.enabled）；开启时仅触发 gitRemoting 占位。
+ * - auto-push 默认关（lkm.autoPush.enabled）；开启时仅提交本次保存的文件再推送。
  * 返回 Disposable，在 activate 的 subscriptions 中注入以便停用时清理。
  */
-function startAutoSync(
+export function startAutoSync(
   _context: vscode.ExtensionContext,
   getCurrentAccount: () => AccountMeta | null
 ): vscode.Disposable {
@@ -489,13 +488,28 @@ function startAutoSync(
     autoPushEnabled: getConfig("autoPush.enabled", false),
   });
   let lastRunByDir = new Map<string, number>();
+  const pendingByDir = new Map<string, Promise<void>>();
+
+  // 同一个仓库的 pull/commit/push 串行执行，避免保存事件与定时拉取相互抢占。
+  function enqueue(dir: string, operation: () => Promise<void>): Promise<void> {
+    const previous = pendingByDir.get(dir) ?? Promise.resolve();
+    const task = previous.then(operation);
+    const settled = task.catch(() => {});
+    pendingByDir.set(dir, settled);
+    void settled.then(() => {
+      if (pendingByDir.get(dir) === settled) pendingByDir.delete(dir);
+    });
+    return task;
+  }
 
   async function pullOne(dir: string): Promise<void> {
-    const git = await getGitByDir(dir);
-    if (!git) return;
     try {
-      await git.pull();
-      lastRunByDir.set(dir, Date.now());
+      await enqueue(dir, async () => {
+        const git = await getGitByDir(dir);
+        if (!git) return;
+        await git.pull();
+        lastRunByDir.set(dir, Date.now());
+      });
     } catch {
       /* 静默，badge 由 provider 展示 */
     }
@@ -522,23 +536,19 @@ function startAutoSync(
     if (e.focused && settings().pullOnFocus) void pullAll();
   });
 
-  // auto-commit/push 尚未实现：首次触发时显式告知一次，避免用户以为保存已被提交推送。
-  let autoPushWarned = false;
   const onSave = vscode.workspace.onDidSaveTextDocument((doc) => {
     const cfg = settings();
     if (!cfg.autoPushEnabled) return;
     const acc = getCurrentAccount();
-    if (!acc || !doc.fileName) return;
-    const dir = pathBelongsToAccount(doc.fileName, acc);
+    if (!acc || doc.uri.scheme !== "file") return;
+    const filePath = doc.uri.fsPath;
+    const dir = pathBelongsToAccount(filePath, acc);
     if (!dir) return;
-    if (!autoPushWarned) {
-      autoPushWarned = true;
-      void vscode.window.showWarningMessage(
-        "lkm.autoPush.enabled 尚未实现自动提交/推送，保存文件不会产生任何 git 操作"
-      );
-    }
-    void getGitByDir(dir)
-      .then((git) => (git ? gitRemoting(git, cfg) : undefined))
+    void enqueue(dir, async () => {
+      const git = await getGitByDir(dir);
+      if (!git) throw new Error(`未找到已打开的 Git 仓库：${dir}`);
+      await gitRemoting(git, filePath);
+    })
       .catch((err) => {
         // 不能让它变成未处理的 Promise 拒绝：用户否则完全看不到自动同步失败。
         void vscode.window.showErrorMessage(
@@ -555,15 +565,10 @@ function startAutoSync(
 }
 
 /**
- * auto-push：add -A + commit + push。
- *
- * 占位：GitRepositoryHandle 只有 pull/push，缺少 add/commit 能力。
- * 实际 auto-commit+push 需要 git.ts 扩展 commitAndPush（add -A + commit "lkm: auto-sync" + push），
- * 属明确后续项，本版不假实现。该函数仅在 autoPush 开启（默认关）时才会被调用，
- * 调用方已在首次触发时给出「尚未实现」的显式提示，避免静默无效果。
+ * 保存后只提交当前文件；无 Git 改动时跳过推送。
  */
-async function gitRemoting(_git: { pull(): Promise<void>; push(): Promise<void> }, _cfg: SyncSettings): Promise<void> {
-  // 占位：git.ts 需扩展 commitAndPush（add -A + commit "lkm: auto-sync" + push）在此接线。
+async function gitRemoting(git: GitRepositoryHandle, filePath: string): Promise<void> {
+  if (await git.commitSavedFile(filePath)) await git.push();
 }
 
 /** 扩展激活入口：以真实实现注册命令与树视图，并启动自动同步。 */

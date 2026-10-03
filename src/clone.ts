@@ -44,8 +44,8 @@ export interface CloneDeps {
   pickSeries(series: BlogSeries[]): Promise<BlogSeries | null>;
   /** 让用户选择一个目标目录，取消/未选返回 undefined。 */
   pickTargetDir(): Promise<string | undefined>;
-  /** 实际执行 git clone，失败抛错。 */
-  doClone(url: string, dir: string): Promise<void>;
+  /** 执行 git clone，返回实际创建的仓库目录；失败抛错。 */
+  doClone(url: string, dir: string, repoName: string): Promise<string>;
   /** clone 成功后的可选提示（如提醒移除 remote 明文）。 */
   afterCloneHint?: (dir: string) => Promise<void>;
 }
@@ -116,14 +116,16 @@ export async function runCloneFlow(
   const bareUrl = gitCloneUrl(serverUrl, creds.username, creds.password, picked.repo_name);
   const cloneUrl = embedBasicAuth(bareUrl, creds.username, creds.password);
 
+  let repoDir: string;
   try {
-    await deps.doClone(cloneUrl, targetDir);
+    repoDir = await deps.doClone(cloneUrl, targetDir, picked.repo_name);
+    if (!repoDir) throw new Error("Git 未返回仓库目录");
   } catch (err) {
     return { kind: "error", message: `克隆失败：${errMsg(err)}` };
   }
   // 全局克隆同样内联了明文凭证，需给出移除提示；提示失败不能把已成功的 clone 判为 error。
   try {
-    await deps.afterCloneHint?.(targetDir);
+    await deps.afterCloneHint?.(repoDir);
   } catch {
     /* 提示仅起提醒作用，失败忽略 */
   }
@@ -180,23 +182,25 @@ export async function runCloneForAccount(
 
   const bareUrl = gitCloneUrl(serverUrl, creds.username, creds.password, picked.repo_name);
   const cloneUrl = embedBasicAuth(bareUrl, creds.username, creds.password);
+  let repoDir: string;
   try {
-    await deps.doClone(cloneUrl, targetDir);
+    repoDir = await deps.doClone(cloneUrl, targetDir, picked.repo_name);
+    if (!repoDir) throw new Error("Git 未返回仓库目录");
   } catch (err) {
     return { kind: "error", message: `克隆失败：${errMsg(err)}` };
   }
   // 提示与映射写回都在 clone 成功之后：提示失败若走 catch 会把成功的 clone 判为 error，
   // 并让 mapSeries 不执行、账号映射永久丢失。
   try {
-    await deps.afterCloneHint?.(targetDir);
+    await deps.afterCloneHint?.(repoDir);
   } catch {
     /* 提示仅起提醒作用，失败忽略 */
   }
-  const updated = mapSeries(account, picked.repo_name, targetDir, picked.id);
+  const updated = mapSeries(account, picked.repo_name, repoDir, picked.id);
   return {
     kind: "cloned",
     account: updated,
-    series: { repo_name: picked.repo_name, dir: targetDir, id: picked.id },
+    series: { repo_name: picked.repo_name, dir: repoDir, id: picked.id },
     message: `已克隆 ${picked.title}`,
   };
 }

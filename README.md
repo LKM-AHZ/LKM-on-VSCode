@@ -2,7 +2,7 @@
 
 在 VS Code 中克隆并编辑 LKM 平台的 blog 系列（Git 托管博客）。
 
-> 当前版本为 `0.0.1`。自动提交/推送尚未实现，默认自动同步仅执行 pull。项目总文档见
+> 当前版本为 `0.0.1`。默认自动同步仅执行 pull；自动提交/推送需显式开启。项目总文档见
 > [`../DOCUMENTATION.md`](../DOCUMENTATION.md)。
 
 ## 环境要求
@@ -47,16 +47,18 @@ pnpm run package
 
 - 定时拉取：`lkm.sync.pullIntervalMinutes`（默认 5 分钟）。
 - 聚焦拉取：`lkm.sync.pullOnFocus`（默认 true）。
-- 自动保存推送：`lkm.autoPush.enabled`（默认 **false**）。开启后会在保存时触发 auto-push 决策，但 **auto-commit+push 尚未实现**（git.ts 需扩展 add/commit 能力的 `commitAndPush`），属明确后续项。
+- 自动保存推送：`lkm.autoPush.enabled`（默认 **false**）。开启后，保存已映射系列中的文件时，只暂存并提交这个文件，再推送当前仓库。暂存区已有改动时会中止并提示，避免提交其他文件。无 Git 改动的保存不会产生提交。
 
 **已知限制（自动 pull 仅对已打开仓库生效）**：定时/聚焦 pull 通过 GitExtension 按目录解析仓库，只认**当前已在该 VS Code 工作区打开/加载**的仓库。被映射到某目录、但当前未打开的仓库**不会**被自动拉取（静默跳过，属预期行为）。如需同步此类未打开目录，请显式 `LKM: Pull` 或将该目录加入工作区后等待下一次自动拉取。
+
+自动推送同样要求仓库已在 VS Code 中打开。推送失败时本地提交会保留，可在处理网络或远端冲突后手动重试 `LKM: Push`。
 
 ## 配置
 - `lkm.serverUrl`：LKM 后端地址，如 `https://lkm-ahz.ltd`。
 - `lkm.sync.pullIntervalMinutes` / `lkm.sync.pullOnFocus` / `lkm.autoPush.enabled`：自动同步参数（见上）。
 
 ## 凭证
-用户名与密码存入 VS Code 安全存储（SecretStorage），clone 时内联于 git URL，首次推送可能提示保存 git 凭证。每次操作复用缓存的 Bearer token；遇 401 会自动使缓存失效并在下次操作重新登录兑换（规避登录限流）。
+用户名与密码存入 VS Code 安全存储（SecretStorage），clone 时内联于 git URL，首次推送可能提示保存 git 凭证。克隆使用系统 Git 命令行，成功后记录实际仓库目录供自动同步使用。每次 API 操作复用缓存的 Bearer token；遇 401 会自动使缓存失效并在下次操作重新登录兑换（规避登录限流）。
 
 不要把包含凭证的 Git remote URL、VS Code 用户数据目录或调试日志提交到仓库。移除账号会清理
 扩展保存的 SecretStorage 记录，但不会自动删除系统 Git 凭证管理器中可能保存的凭证。

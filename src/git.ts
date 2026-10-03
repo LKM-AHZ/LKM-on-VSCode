@@ -1,12 +1,17 @@
 /**
- * git 操作层：clone 系列仓库与 pull/push。
+ * git 操作层：系统 Git 克隆系列仓库，VS Code Git API 执行 pull/commit/push。
  *
- * 依赖 VS Code 内置 GitExtension（vscode.extensions.getExtension("vscode.git")）。
+ * 仓库同步依赖 VS Code 内置 GitExtension（vscode.extensions.getExtension("vscode.git")）。
  * GitExtension 的运行时 API 类型不被 @types/vscode 覆盖，故通过 `any`/结构桥接
  * （VS Code 扩展常见做法）。纯函数 embedBasicAuth 单独抽出便于单测。
  */
 
 import * as vscode from "vscode";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { join } from "node:path";
+
+const execFileAsync = promisify(execFile);
 
 /**
  * 把 user:pass 以 Basic 认证的方式内联进裸 clone URL。
@@ -31,66 +36,99 @@ export function embedBasicAuth(cloneUrl: string, username: string, password: str
   return cloneUrl.slice(0, hostStart) + cred + cloneUrl.slice(hostStart);
 }
 
-/** 桥接出来的 GitExtension 子集：clone(url, parentPath) 返回克隆后的仓库路径。 */
-interface GitApi {
-  clone(url: string, parentPath: string): Promise<string>;
-}
-
 /**
- * 激活 vscode.git 扩展并返回其 API 对象。
+ * 激活 vscode.git 扩展并通过 GitExtension.getAPI(1) 获取仓库 API。
  * 扩展不存在或激活失败返回 null，由调用方决定是抛错还是一并当作「无仓库」处理。
  */
 async function activateGitApi(): Promise<unknown | null> {
   const ext = vscode.extensions.getExtension("vscode.git");
   if (!ext) return null;
   try {
-    return ((await ext.activate()) as unknown) ?? null;
+    const gitExtension = (await ext.activate()) as { getAPI?: (version: 1) => unknown } | null;
+    return gitExtension?.getAPI?.(1) ?? null;
   } catch {
     return null;
   }
 }
 
 /**
- * 取 GitExtension 的桥接 API，负责激活扩展。
- *
- * getExtension 不存在或扩展未加载时抛错——clone 流程依赖它，必须失败快。
- */
-async function gitApi(): Promise<GitApi> {
-  const api = await activateGitApi();
-  if (!api) throw new Error("vscode.git 扩展未加载或激活失败");
-  if (typeof (api as GitApi).clone !== "function") throw new Error("vscode.git API 缺少 clone 方法");
-  return api as GitApi;
-}
-
-/**
  * 克隆仓库到目标目录。
  *
+ * VS Code 1.85 的 GitExtension API 不提供 clone；调用系统 Git，和 README 环境要求一致。
  * @param cloneUrl 含内联凭证的 clone URL（由 embedBasicAuth 生成）
- * @param targetDir 父目录，GitExtension.clone 在其下创建仓库
+ * @param targetDir 父目录
+ * @param repoName 本地仓库目录名
  */
-export async function cloneRepository(cloneUrl: string, targetDir: string): Promise<void> {
-  const api = await gitApi();
-  // GitExtension.clone(url, parentPath) 返回克隆后的仓库(字符串 path)
-  await api.clone(cloneUrl, targetDir);
+export async function cloneRepository(cloneUrl: string, targetDir: string, repoName: string): Promise<string> {
+  if (!repoName || repoName === "." || repoName === ".." || /[\\/\0]/.test(repoName)) {
+    throw new Error("无效的仓库目录名");
+  }
+  const repoDir = join(targetDir, repoName);
+  try {
+    await execFileAsync("git", ["clone", "--", cloneUrl, repoDir], { cwd: targetDir });
+  } catch {
+    // Node 的 execFile 错误包含完整 argv；argv 中有克隆凭证，不能直接向 UI 展示。
+    throw new Error("Git 克隆失败，请检查账号、网络、目标目录与仓库权限");
+  }
+  return repoDir;
 }
 
-/** pull/push 操作的最小仓库接口。 */
+/** 仓库同步操作的最小接口。 */
 export interface GitRepositoryHandle {
   pull(): Promise<void>;
   push(): Promise<void>;
+  /** 提交保存的文件；文件在 Git 中无改动时返回 false。 */
+  commitSavedFile(filePath: string): Promise<boolean>;
 }
 
-/** 把仓库对象包装成 {pull, push} 的 GitRepositoryHandle。 */
+/** 把 VS Code Git 仓库对象包装成 GitRepositoryHandle。 */
 function wrapRepository(repo: unknown): GitRepositoryHandle {
   // vscode.git 的 API 对象没有类型保障，缺方法时在此明确报错，
   // 否则会拖到调用点变成 "Cannot read properties of undefined" 这类难定位的错误。
-  const typed = repo as { pull?: unknown; push?: unknown };
+  const typed = repo as {
+    pull?: unknown;
+    push?: unknown;
+    add?: unknown;
+    commit?: unknown;
+    status?: unknown;
+    state?: {
+      indexChanges?: unknown[];
+      workingTreeChanges?: Array<{ uri?: { fsPath?: string } }>;
+    };
+  };
   if (typeof typed.pull !== "function" || typeof typed.push !== "function") {
     throw new Error("vscode.git 仓库对象缺少 pull/push 方法");
   }
   return {
     pull: () => (typed.pull as () => Promise<void>)(),
     push: () => (typed.push as () => Promise<void>)(),
+    commitSavedFile: async (filePath: string) => {
+      if (typeof typed.add !== "function" || typeof typed.commit !== "function" || typeof typed.status !== "function") {
+        throw new Error("vscode.git 仓库对象缺少 status/add/commit 方法");
+      }
+      await (typed.status as () => Promise<void>)();
+      // VS Code Git 的 commit 默认提交暂存区。已有暂存内容时中止，避免把用户的
+      // 其他工作一并提交；只暂存本次保存的文件。
+      if (
+        !typed.state ||
+        !Array.isArray(typed.state.indexChanges) ||
+        !Array.isArray(typed.state.workingTreeChanges)
+      ) {
+        throw new Error("无法读取 Git 工作区状态，已取消自动提交");
+      }
+      if (typed.state.indexChanges.length > 0) {
+        throw new Error("暂存区已有改动，已取消自动提交以免包含其他文件");
+      }
+      if (!typed.state.workingTreeChanges.some((c) => c.uri?.fsPath && normFs(c.uri.fsPath) === normFs(filePath))) {
+        return false;
+      }
+      await (typed.add as (paths: string[]) => Promise<void>)([filePath]);
+      await (typed.commit as (message: string, options: { all: false; postCommitCommand: null }) => Promise<void>)(
+        "lkm: auto-sync",
+        { all: false, postCommitCommand: null }
+      );
+      return true;
+    },
   };
 }
 
