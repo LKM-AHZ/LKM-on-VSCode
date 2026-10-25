@@ -1,0 +1,39 @@
+name: CI
+
+# 这个仓库此前**没有任何 CI**：`pnpm run compile`（tsc）与 `pnpm test`（vitest，79 个用例）
+# 只能靠本地跑，改坏了不会在 PR 上体现。这里补最小门禁：编译 + 单测。
+# VSCode 扩展的端到端测试需要 VS Code 宿主，不在本工作流范围内（本地 `pnpm test` 即可）。
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test:
+    name: compile + vitest
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          # 仓库没有 packageManager 字段，必须显式给版本；与本地/锁文件一致
+          version: 11.21.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: 编译（tsc）
+        run: pnpm run compile
+      - name: 单元测试（vitest）
+        run: pnpm test
