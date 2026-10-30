@@ -21,6 +21,10 @@ export function __emitDidSave(document: unknown): void {
   for (const listener of saveListeners) listener(document);
 }
 
+export function __emitWindowState(state: { focused: boolean }): void {
+  for (const listener of focusListeners) listener(state);
+}
+
 export const workspace = {
   getConfiguration: (section = "") => {
     let values = configStore.get(section);
@@ -65,6 +69,7 @@ export const resetInputBoxQueue = (): void => {
 };
 
 export const window = {
+  registerTreeDataProvider: (_view: string, _provider: unknown) => new Disposable(),
   showInformationMessage: (..._args: unknown[]) => Promise.resolve(undefined),
   showErrorMessage: (..._args: unknown[]) => Promise.resolve(undefined),
   showWarningMessage: (..._args: unknown[]) => Promise.resolve(undefined),

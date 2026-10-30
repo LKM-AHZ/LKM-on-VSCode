@@ -74,8 +74,8 @@ export const TOKEN_SAFETY_MARGIN_MS = 60 * 1000;
 /**
  * 凭证→token 缓存管理器：复用 token 规避登录限流，401 时 invalidate 触发重兑。
  *
- * token 有 15 分钟有效期：超过该窗口后，即便未收到 401，下次 getToken 也会
- * 视为过期并重新兑换（避免使用已失效的 Bearer）。cachedAt 记录最近一次成功
+ * 按后端 15 分钟有效期提前 60 秒过期：即便未收到 401，下次 getToken 也会
+ * 重新兑换（避免使用已失效的 Bearer）。cachedAt 记录最近一次成功
  * 兑换的时刻，供 lastTokenAt() 判断会话活跃度。
  */
 export function createTokenManager(deps: RestAuthDeps): TokenManager {

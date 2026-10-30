@@ -3,7 +3,29 @@
 在 VS Code 中克隆并编辑 LKM 平台的 blog 系列（Git 托管博客）。
 
 > 当前版本为 `0.0.1`。默认自动同步仅执行 pull；自动提交/推送需显式开启。项目总文档见
-> [`../DOCUMENTATION.md`](../DOCUMENTATION.md)。
+> [编排仓库文档地图](../docs/DOCUMENTATION.md)（单独克隆扩展时见 [LKM-Website 文档](https://github.com/LKM-AHZ/LKM-Website/tree/master/docs)）。
+
+## 代码结构
+
+目录与入口核对日期：2026-10-31。
+
+| 文件/目录 | 职责 |
+|---|---|
+| `src/extension.ts` | 激活入口，装配命令、TreeView 和自动同步，登记停用清理 |
+| `src/commands.ts` | 命令与视图 ID、账号状态持久化、账号/系列/Git 命令处理 |
+| `src/auto-sync.ts` | 定时、聚焦与保存监听；按仓库串行执行 pull/commit/push |
+| `src/accounts.ts` / `src/creds.ts` | 账号和系列目录映射 / SecretStorage 凭证 |
+| `src/auth.ts` / `src/api.ts` | Bearer 令牌缓存与单飞登录 / 博客系列 REST API |
+| `src/clone.ts` / `src/git.ts` | 克隆交互流程 / 系统 Git 与 VS Code GitExtension 操作 |
+| `src/sync.ts` / `src/tree.ts` | 同步时间和路径匹配的纯逻辑 / 系列树节点 |
+| `test/` / `test/mocks/` | 按模块对应的 Vitest 测试 / VS Code API 替身 |
+| `resources/` / `package.json` | 扩展图标 / 命令、视图、设置与入口声明 |
+
+激活入口为 `activate()`，仅负责装配与登记资源清理。`commands.ts` 的命令处理器通过认证和
+API 模块访问后端，通过 Git 模块操作本地仓库。`sync.ts` 计算同步时机与目标路径；
+`auto-sync.ts` 的 `startAutoSync()` 注册计时器、保存和聚焦监听，通过回调读取最新账号。
+命令、自动同步和激活分别由 `test/commands.test.ts`、`test/auto-sync.test.ts` 和
+`test/extension.test.ts` 验证。新增命令需同步 `package.json`；`dist/` 是编译产物，不直接编辑。
 
 ## 环境要求
 

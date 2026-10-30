@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as vscode from "vscode";
 import { AccountMeta } from "../src/accounts";
-import { startAutoSync } from "../src/extension";
+import { startAutoSync } from "../src/auto-sync";
 import { __emitDidSave } from "./mocks/vscode";
 
 const account: AccountMeta = {
@@ -30,7 +30,7 @@ describe("保存后自动推送", () => {
     vi.spyOn(vscode.extensions, "getExtension").mockReturnValue({
       activate: async () => ({ getAPI: () => ({ repositories: [repo] }) }),
     } as never);
-    const disposable = startAutoSync({} as never, () => account);
+    const disposable = startAutoSync(() => account);
     try {
       __emitDidSave({ uri: { scheme: "file", fsPath: "/work/other/post.md" } });
       expect(repo.status).not.toHaveBeenCalled();
