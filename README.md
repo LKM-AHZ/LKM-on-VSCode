@@ -1,5 +1,7 @@
 # LKM-on-VSCode
 
+!此项目的功能已有[LKM-desktop](https://github.com/LKM-AHZ/LKM-desktop)代替，本项目不再维护开发。
+
 在 VS Code 中克隆并编辑 LKM 平台的 blog 系列（Git 托管博客）。
 
 > 当前版本为 `0.0.1`。默认自动同步仅执行 pull；自动提交/推送需显式开启。项目总文档见
